@@ -1,0 +1,4 @@
+#!/bin/sh
+
+test -f .app_src_recompiled || \
+    (touch .app_src_recompiled && rebar compile skip_deps=true)

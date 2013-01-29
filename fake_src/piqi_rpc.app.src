@@ -1,6 +1,10 @@
 {application, piqi_rpc,
  [{description, "Fake .app file to make rebar happy"},
   {vsn, git},
+  % this mod name is here so that for whatever freaky reason this file gets used,
+  % at least `application:start(piqi_rpc)` will fail with an easy-to-debug
+  % reason.
+  {mod, [fake_module_piqi_rpc_should_not_be_called]},
   {modules, []},
   {applications, [kernel, stdlib]},
   {env, []}]}.
