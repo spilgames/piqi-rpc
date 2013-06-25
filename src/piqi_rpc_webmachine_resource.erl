@@ -109,8 +109,8 @@ malformed_request(ReqData, Context) ->
     try
         % NOTE, XXX: this check is actually not necessary as having a query
         % string doesn't affect anything
-        (wrq:req_qs(ReqData) =:= []) orelse
-            throw_malformed("empty query string expected"),
+        %(wrq:req_qs(ReqData) =:= []) orelse
+        %    throw_malformed("empty query string expected"),
 
         % check that function name doesn't contain "/" characters
         case wrq:method(ReqData) of
