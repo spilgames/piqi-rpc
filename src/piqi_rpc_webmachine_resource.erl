@@ -107,19 +107,9 @@ allowed_methods(ReqData, Context) ->
 malformed_request(ReqData, Context) ->
     ?PRINT(malformed_request),
     try
-        % NOTE, XXX: this check is actually not necessary as having a query
-        % string doesn't affect anything
-        %(wrq:req_qs(ReqData) =:= []) orelse
-        %    throw_malformed("empty query string expected"),
-
-        % check that function name doesn't contain "/" characters
-        case wrq:method(ReqData) of
-            'POST' ->
-                FuncName = wrq:disp_path(ReqData),
-                lists:member($/, FuncName) andalso
-                    throw_malformed("invalid function name: " ++ FuncName);
-            _ -> ok
-        end,
+        FuncName = wrq:disp_path(ReqData),
+        lists:member($/, FuncName) andalso
+            throw_malformed("invalid function name: " ++ FuncName),
 
         {_IsMalformed = false, ReqData, Context}
     catch
@@ -140,12 +130,22 @@ known_content_type(ReqData, Context) ->
 
     % NOTE: Webmachine returns <<>> as a body even if "Content-Length" header is
     % not present.
-    Body = wrq:req_body(ReqData),
+    Body = case wrq:method(ReqData) of
+        'GET' -> 
+            Qs = wrq:req_qs(ReqData),
+            case proplists:get_value("body", Qs) of 
+                undefined -> <<>>;
+                BodyParm -> list_to_binary(BodyParm)
+            end;
+        _ ->
+            wrq:req_body(ReqData)
+    end,
     ContentType = get_primary_header_value(
         wrq:get_req_header("content-type", ReqData)),
 
     IsKnownType =
         case ContentType of
+            "text/plain" -> true;
             "application/json" -> true;
             "application/xml" -> true;
             "application/x-protobuf" -> true;
@@ -178,17 +178,21 @@ known_content_type(ReqData, Context) ->
 % In addition to that, dispatches GET requests (the only GET request we support
 % is to get the list of Piqi modules -- we can return it all sorts of different
 % formats).
-content_types_provided(ReqData, Context) ->
+content_types_provided(ReqData, Context = #context { request_body = Body }) ->
     ?PRINT(known_content_type),
     % for all other types 406 Not Acceptable will be returned
     ContentTypes =
         case wrq:method(ReqData) of
-            'GET' -> % get Piqi: by default return it in Piq format
+            'GET' when Body =:= 'undefined' -> % get Piqi: by default return it in Piq format
                 [
                     {"text/plain", get_piqi_piq},
                     {"application/json", get_piqi_json},
                     {"application/xml", get_piqi_xml},
                     {"application/x-protobuf", get_piqi_pb}
+                ];
+            'GET' ->
+                [
+                    {"application/json", process_get}
                 ];
             'POST' ->
                 [
@@ -200,6 +204,9 @@ content_types_provided(ReqData, Context) ->
         end,
     {ContentTypes, ReqData, Context}.
 
+% process GET requests
+process_get(ReqData, Context) ->
+    rpc(ReqData, Context, 'json').
 
 % process POST requests
 process_post(ReqData, Context) ->
@@ -207,7 +214,6 @@ process_post(ReqData, Context) ->
         wrq:get_req_header("content-type", ReqData)),
     InputFormat = content_type_to_format(ContentType),
     rpc(ReqData, Context, InputFormat).
-
 
 %
 % Utility functions
@@ -268,10 +274,16 @@ get_piqi_pb(ReqData, Context) ->
 
 
 get_piqi(ReqData, Context, OutputFormat) ->
-    RpcMod = Context#context.rpc_mod,
-    Options = make_service_options(Context),
-    Body = RpcMod:get_piqi(OutputFormat, Options),
-    {Body, ReqData, Context}.
+    case application:get_env(piqi_rpc, 'return_definition') of
+        {ok, true} ->
+            RpcMod = Context#context.rpc_mod,
+            Options = make_service_options(Context),
+            Body = RpcMod:get_piqi(OutputFormat, Options),
+            {Body, ReqData, Context};
+        _ ->
+            NewReqData = set_string_error("non-empty input expected", ReqData),
+            {{halt, 411}, NewReqData, Context}
+    end.
 
 
 rpc(ReqData, Context, InputFormat) ->
