@@ -127,13 +127,13 @@ throw_malformed(X) ->
 % called for POST request
 known_content_type(ReqData, Context) ->
     ?PRINT(known_content_type),
-
+    Method = wrq:method(ReqData),
     % NOTE: Webmachine returns <<>> as a body even if "Content-Length" header is
     % not present.
-    Body = case wrq:method(ReqData) of
-        'GET' -> 
+    Body = case Method of
+        'GET' ->
             Qs = wrq:req_qs(ReqData),
-            case proplists:get_value("body", Qs) of 
+            case proplists:get_value("body", Qs) of
                 undefined -> <<>>;
                 BodyParm -> list_to_binary(BodyParm)
             end;
@@ -149,9 +149,9 @@ known_content_type(ReqData, Context) ->
             "application/json" -> true;
             "application/xml" -> true;
             "application/x-protobuf" -> true;
-            % allow content-type to be undefined when the body is empty
-            'undefined' when Body == <<>> -> true;
-            "" when Body == <<>> -> true;
+            % allow content-type to be undefined when the body is empty or if the method is GET
+            'undefined' when Body == <<>> orelse Method == 'GET' -> true;
+            "" when Body == <<>> orelse Method == 'GET' -> true;
             _ -> false
         end,
 
@@ -206,7 +206,7 @@ content_types_provided(ReqData, Context = #context { request_body = Body }) ->
 
 % process GET requests
 process_get(ReqData, Context) ->
-    rpc(ReqData, Context, 'json').
+    rpc(ReqData, Context, 'json', true).
 
 % process POST requests
 process_post(ReqData, Context) ->
@@ -239,10 +239,15 @@ content_type_to_format("text/plain") -> 'piq';
 content_type_to_format(_) -> 'undefined'.
 
 
-set_data_response(Data, OutputFormat, ReqData) ->
-    wrq:set_resp_header(
-        "Content-Type", format_to_content_type(OutputFormat),
-        wrq:set_resp_body(Data, ReqData)).
+set_data_response(Data, OutputFormat, ReqData, Return) ->
+    ReqDataWHdr =
+        wrq:set_resp_header("Content-Type", format_to_content_type(OutputFormat), ReqData),
+    case Return of
+        true ->
+            {Data, ReqDataWHdr};
+        false ->
+            {true, wrq:set_resp_body(Data, ReqDataWHdr)}
+    end.
 
 
 set_string_error(Str, ReqData) when is_binary(Str) ->
@@ -287,6 +292,9 @@ get_piqi(ReqData, Context, OutputFormat) ->
 
 
 rpc(ReqData, Context, InputFormat) ->
+    rpc(ReqData, Context, InputFormat, false).
+
+rpc(ReqData, Context, InputFormat, ReturnData) ->
     FuncName = list_to_binary(wrq:disp_path(ReqData)),
     ?PRINT({rpc, FuncName, InputFormat}),
 
@@ -337,8 +345,9 @@ rpc(ReqData, Context, InputFormat) ->
 
         {ok, OutputData} ->
             % return 200 OK
-            NewReqData = set_data_response(OutputData, OutputFormat, ReqDataResponse),
-            {true, NewReqData, Context};
+            {Ret, NewReqData} =
+                set_data_response(OutputData, OutputFormat, ReqDataResponse, ReturnData),
+            {Ret, NewReqData, Context};
 
         {error, ErrorData} -> % application error
             % If the HTTP header "X-Piqi-RPC-return-http-status-via-header" is
@@ -350,12 +359,14 @@ rpc(ReqData, Context, InputFormat) ->
             % the same 500 HTTP status code. The the only difference between
             % them is the "Content-Type" header which is set to "text/plain" in
             % the latter case.
-            NewReqData = set_data_response(ErrorData, OutputFormat, ReqDataResponse),
+            {Ret, NewReqData} =
+                set_data_response(ErrorData, OutputFormat, ReqDataResponse, ReturnData),
 
             case wrq:get_req_header("X-Piqi-RPC-return-http-status-via-header", ReqDataResponse) of
                 "true" ->
-                    NewReqDataWithHttpStatus = wrq:set_resp_header("X-Piqi-RPC-http-status", "500", NewReqData),
-                    {true, NewReqDataWithHttpStatus, Context};
+                    NewReqDataWithHttpStatus =
+                        wrq:set_resp_header("X-Piqi-RPC-http-status", "500", NewReqData),
+                    {Ret, NewReqDataWithHttpStatus, Context};
                 _ ->
                     {{halt, 500}, NewReqData, Context}
             end;
