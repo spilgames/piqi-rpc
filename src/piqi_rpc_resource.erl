@@ -83,6 +83,8 @@ rpc(Req, State = #rpc_state{rpc_mod = RpcMod, impl_mod =ImplMod, options = Optio
     % Pass the whole request through the process dictionary
     % @TODO based on options pass it or parts as second argument to the implementation function call.
     erlang:put(cowboy_req, Req2),
+    % Body is not stored in the request object.
+    erlang:put(cowboy_body, Body),
     RpcResponse = RpcMod:rpc(ImplMod, Function, Body, InputFormat, OutputFormat, Options),
     Req3 = erlang:get(cowboy_req),
     case RpcResponse of
