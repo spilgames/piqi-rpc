@@ -84,13 +84,14 @@ encode_common(RpcMod, Encoder, TypeName, OutputFormat, Output, Options) ->
         try Encoder(Output)
         catch
             Class:Reason ->
+                Stacktrace = erlang:get_stacktrace(),
                 OutputStr = lists:flatten(format_term(Output)),
                 Error = io_lib:format(
                     "error encoding output:~n"
                     "~s,~n"
                     "exception: ~w:~P,~n"
                     "stacktrace: ~P",
-                    [OutputStr, Class, Reason, 30, erlang:get_stacktrace(), 30]),
+                    [OutputStr, Class, Reason, 30, Stacktrace, 30]),
                 throw_rpc_error(
                     {'invalid_output', iolist_to_binary(Error)})
         end,
