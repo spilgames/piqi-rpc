@@ -59,8 +59,9 @@ cleanup() ->
 get_cowboy_routes() ->
     RpcServices = piqi_rpc:get_services(),
     Routes = [ rpc_service_to_cowboy_route(X) || X <- RpcServices ],
+    HealthRoutes = cowboy_health_routes(RpcServices),
     Dispatch = [
-        {'_', lists:flatten(Routes)}
+        {'_', lists:flatten(HealthRoutes ++ Routes)}
     ],
     cowboy_router:compile(Dispatch).
 
@@ -78,6 +79,11 @@ rpc_service_to_cowboy_route(_RpcService = {ImplMod, RpcMod, UrlPath, Options}) -
         {PathMatch, piqi_rpc_resource, {ImplMod, RpcMod, make_service_options(Options)}},
         {AdjustedPath, piqi_rpc_resource, {ImplMod, RpcMod, make_service_options(Options)}}
     ].
+
+cowboy_health_routes(RpcServices) ->
+    Endpoints = find_undefined_health_endpoints(RpcServices, [], []),
+    [{"/" ++ E ++ "/health/", piqi_health_resource, [E]} || E <- Endpoints].
+
 
 -spec add_service/1 :: ( piqi_rpc_service() ) -> ok.
 add_service(_RpcService = {_ImplMod, _RpcMod, _UrlPath, _Options}) ->
@@ -118,3 +124,18 @@ make_service_options(Options) ->
     DefaultOpts = get_env(piqi_rpc, 'default_service_options', []),
     ReturnDefinition = get_env(piqi_rpc, 'return_definition', false),
     Options ++ [{return_definition, ReturnDefinition}] ++ DefaultOpts.
+
+find_undefined_health_endpoints([], _Defined, Undefined) ->
+    lists:usort(Undefined);
+
+find_undefined_health_endpoints([{_ImplMod, health, UrlPath, _Options}|RpcServices], Defined, Undefined) ->
+    FilteredUndefined = lists:filter(fun(E) -> E =/= UrlPath end, Undefined),
+    find_undefined_health_endpoints(RpcServices, [UrlPath|Defined], FilteredUndefined);
+
+find_undefined_health_endpoints([{_ImplMod, _RpcMod, UrlPath, _Options}|RpcServices], Defined, Undefined) ->
+    case lists:member(UrlPath, Defined) of
+        true ->
+            find_undefined_health_endpoints(RpcServices, Defined, Undefined);
+        false ->
+            find_undefined_health_endpoints(RpcServices, Defined, [UrlPath|Undefined])
+    end.
